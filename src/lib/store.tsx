@@ -242,6 +242,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   stateRef.current = state;
   const hydrated = useRef(false);
   const skipPush = useRef(false);
+  const pulledUserId = useRef<string | null>(null);
 
   // Carga desde localStorage al montar + rollover de día
   useEffect(() => {
@@ -275,8 +276,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     if (!supabase) return;
     supabase.auth.getSession().then(({ data }) => setSession(data.session));
     const { data: sub } = supabase.auth.onAuthStateChange((_event, s) => {
-      setSession(s);
-      if (!s) setStatus("idle");
+      // Solo cambiamos la referencia de sesión si cambió el usuario.
+      // Así evitamos que eventos como TOKEN_REFRESHED o recuperar el foco
+      // vuelvan a disparar el pull inicial y sobrescriban el estado local.
+      setSession((prev) => (prev?.user?.id === s?.user?.id ? prev : s));
+      if (!s) {
+        setStatus("idle");
+        pulledUserId.current = null;
+      }
     });
     return () => sub.subscription.unsubscribe();
   }, []);
@@ -284,6 +291,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   // --- Pull inicial al iniciar sesión ---
   useEffect(() => {
     if (!supabase || !session) return;
+    // Un solo pull por usuario: si ya lo hicimos, no volvemos a traer datos
+    // remotos (evita pisar tareas recién agregadas que aún no se subieron).
+    if (pulledUserId.current === session.user.id) return;
+    pulledUserId.current = session.user.id;
     let cancelled = false;
     (async () => {
       setStatus("syncing");
