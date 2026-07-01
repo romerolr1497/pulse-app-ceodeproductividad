@@ -1,5 +1,5 @@
 // Pulse service worker — notificaciones de rutina + soporte offline
-const CACHE = "pulse-v3";
+const CACHE = "pulse-v4";
 
 self.addEventListener("install", (event) => {
   self.skipWaiting();

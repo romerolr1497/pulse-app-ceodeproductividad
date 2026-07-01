@@ -4,7 +4,7 @@ import { useState, useRef, useEffect } from "react";
 import { useStore } from "@/lib/store";
 import { parseCommand } from "@/lib/parseCommand";
 import type { Task } from "@/lib/types";
-import { Mic, Send, Sparkles } from "lucide-react";
+import { Mic, Send, Activity } from "lucide-react";
 
 interface Msg {
   id: string;
@@ -111,12 +111,12 @@ export function AssistantChat() {
   return (
     <div className="glass-card p-4 flex flex-col">
       <div className="flex items-center gap-2 mb-3">
-        <Sparkles size={16} className="text-[var(--accent)]" />
+        <Activity size={16} className="text-[var(--accent)]" />
         <h2 className="font-heading text-sm font-semibold text-[var(--text-primary)]">
-          Asistente
+          Beat
         </h2>
         <span className="text-[11px] text-[var(--text-tertiary)] ml-auto">
-          Escribí o dictá una tarea
+          el asistente de Pulse
         </span>
       </div>
 
@@ -127,15 +127,7 @@ export function AssistantChat() {
       >
         {msgs.length === 0 ? (
           <div className="text-[12px] text-[var(--text-tertiary)] leading-relaxed">
-            Probá:{" "}
-            <span className="text-[var(--text-secondary)]">
-              &ldquo;agregar tarea comprar verduras&rdquo;
-            </span>{" "}
-            o{" "}
-            <span className="text-[var(--text-secondary)]">
-              &ldquo;agregar tarea a Bonne Vet hacer esto con Claude&rdquo;
-            </span>
-            .
+            Hola, soy <span className="text-[var(--accent)]">Beat</span>. Decime qué querés agendar.
           </div>
         ) : (
           msgs.map((m) => (

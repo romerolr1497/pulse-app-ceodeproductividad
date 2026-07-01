@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext, useReducer, useEffect, useState, useRef, type ReactNode } from "react";
+import { createContext, useContext, useReducer, useEffect, useState, useRef, useCallback, type ReactNode } from "react";
 import type { RoutineBlock, Task, Project, DayLog, AppSettings } from "./types";
 import { supabase, supabaseEnabled } from "./supabase";
 import type { Session } from "@supabase/supabase-js";
@@ -233,8 +233,15 @@ const StoreContext = createContext<{
   sync: SyncApi;
 } | null>(null);
 
+const USER_ACTION_TYPES = new Set<Action["type"]>([
+  "TOGGLE_ROUTINE", "ADD_ROUTINE", "UPDATE_ROUTINE", "DELETE_ROUTINE",
+  "ADD_TASK", "TOGGLE_TASK", "DELETE_TASK",
+  "ADD_PROJECT", "DELETE_PROJECT", "ADD_PROJECT_TASK", "TOGGLE_PROJECT_TASK", "DELETE_PROJECT_TASK",
+  "SAVE_DAY_LOG", "UPDATE_SETTINGS", "SET_NOTE", "RESET_ALL",
+]);
+
 export function StoreProvider({ children }: { children: ReactNode }) {
-  const [state, dispatch] = useReducer(reducer, initialState);
+  const [state, rawDispatch] = useReducer(reducer, initialState);
   const [session, setSession] = useState<Session | null>(null);
   const [status, setStatus] = useState<SyncStatus>(supabaseEnabled ? "idle" : "offline");
 
@@ -244,6 +251,17 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const skipPush = useRef(false);
   const pulledUserId = useRef<string | null>(null);
 
+  // Envolvemos dispatch para marcar la hora de la última edición del usuario.
+  // Sirve para resolver conflictos de sync (last-write-wins) sin perder tareas.
+  const dispatch = useCallback((action: Action) => {
+    if (hydrated.current && USER_ACTION_TYPES.has(action.type)) {
+      try {
+        localStorage.setItem("organizer-updated-at", new Date().toISOString());
+      } catch {}
+    }
+    rawDispatch(action);
+  }, []);
+
   // Carga desde localStorage al montar + rollover de día
   useEffect(() => {
     const today = localDateStr();
@@ -252,6 +270,15 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       try {
         const parsed = JSON.parse(saved);
         dispatch({ type: "LOAD", payload: { ...initialState, ...parsed } });
+        // Si hay datos locales sin marca de tiempo, la creamos ahora para no
+        // perderlos frente a un remoto más viejo en el primer sync.
+        if (
+          !localStorage.getItem("organizer-updated-at") &&
+          Array.isArray(parsed.tasks) &&
+          parsed.tasks.length > 0
+        ) {
+          localStorage.setItem("organizer-updated-at", new Date().toISOString());
+        }
       } catch {}
     }
     dispatch({ type: "ROLLOVER_DAY", today });
@@ -300,7 +327,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       setStatus("syncing");
       const { data, error } = await supabase
         .from("app_state")
-        .select("data")
+        .select("data, updated_at")
         .eq("user_id", session.user.id)
         .maybeSingle();
       if (cancelled) return;
@@ -309,10 +336,24 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         return;
       }
       if (data?.data) {
-        // Hay datos remotos: los traemos y normalizamos el día
-        skipPush.current = true;
-        dispatch({ type: "IMPORT_DATA", payload: data.data as Partial<State> });
-        dispatch({ type: "ROLLOVER_DAY", today: localDateStr() });
+        // Resolvemos conflictos por fecha de modificación (last-write-wins):
+        // si lo local es más nuevo que lo remoto, subimos local en vez de pisarlo.
+        const remoteAt = new Date((data.updated_at as string) ?? 0).getTime();
+        const localRaw = localStorage.getItem("organizer-updated-at");
+        const localAt = localRaw ? new Date(localRaw).getTime() : 0;
+        if (localAt > remoteAt) {
+          await pushNow(session, stateRef.current);
+        } else {
+          skipPush.current = true;
+          dispatch({ type: "IMPORT_DATA", payload: data.data as Partial<State> });
+          dispatch({ type: "ROLLOVER_DAY", today: localDateStr() });
+          try {
+            localStorage.setItem(
+              "organizer-updated-at",
+              (data.updated_at as string) ?? new Date().toISOString()
+            );
+          } catch {}
+        }
         setStatus("synced");
       } else {
         // Primera vez: subimos lo que haya local
@@ -342,11 +383,17 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   async function pushNow(s: Session, data: State) {
     if (!supabase) return;
     setStatus("syncing");
+    const ts = new Date().toISOString();
     const { error } = await supabase.from("app_state").upsert({
       user_id: s.user.id,
       data,
-      updated_at: new Date().toISOString(),
+      updated_at: ts,
     });
+    if (!error) {
+      try {
+        localStorage.setItem("organizer-updated-at", ts);
+      } catch {}
+    }
     setStatus(error ? "error" : "synced");
   }
 
