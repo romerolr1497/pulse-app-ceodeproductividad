@@ -6,7 +6,6 @@ import { DayProgress } from "@/components/DayProgress";
 import { QuickStats } from "@/components/QuickStats";
 import { LiveHeader } from "@/components/LiveHeader";
 import { DailyNote } from "@/components/DailyNote";
-import { AssistantChat } from "@/components/AssistantChat";
 
 export default function Home() {
   return (
@@ -15,11 +14,6 @@ export default function Home() {
 
       {/* Bento grid layout */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-3 lg:gap-4">
-        {/* Row 0: Asistente (voz + texto) */}
-        <div className="lg:col-span-12">
-          <AssistantChat />
-        </div>
-
         {/* Row 1: Progress + Quick Stats */}
         <div className="lg:col-span-5 xl:col-span-4">
           <DayProgress />

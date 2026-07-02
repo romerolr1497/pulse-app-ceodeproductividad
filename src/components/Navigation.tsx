@@ -2,11 +2,12 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { LayoutDashboard, FolderKanban, BarChart3, Settings, ChevronUp } from "lucide-react";
+import { LayoutDashboard, FolderKanban, BarChart3, Settings, ChevronUp, Sparkles } from "lucide-react";
 import { Logo } from "./Logo";
 
 const navItems = [
   { href: "/", icon: LayoutDashboard, label: "Hoy" },
+  { href: "/beat", icon: Sparkles, label: "Beat" },
   { href: "/projects", icon: FolderKanban, label: "Proyectos" },
   { href: "/stats", icon: BarChart3, label: "Stats" },
   { href: "/settings", icon: Settings, label: "Config" },
