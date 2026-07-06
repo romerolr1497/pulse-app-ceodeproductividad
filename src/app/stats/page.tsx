@@ -63,6 +63,22 @@ export default function StatsPage() {
   const weekAvg = Math.round(weekLogs.reduce((s, d) => s + d.completion, 0) / 7);
   const bestDay = [...last14Days].sort((a, b) => b.completion - a.completion)[0];
 
+  // Rutinas flexibles: veces completadas en los últimos 7 y 30 días
+  const last7Set = new Set(last14Days.slice(-7).map((d) => d.fullDate));
+  const monthStart = (() => {
+    const d = new Date(today);
+    d.setDate(d.getDate() - 29);
+    return d.toISOString().split("T")[0];
+  })();
+  const flexStats = state.flexRoutines.map((f) => ({
+    id: f.id,
+    name: f.name,
+    color: f.color,
+    week: f.completedDates.filter((d) => last7Set.has(d)).length,
+    month: f.completedDates.filter((d) => d >= monthStart).length,
+    total: f.completedDates.length,
+  }));
+
   if (!mounted) {
     return <div className="p-4 lg:p-6 xl:p-8 max-w-[1400px] mx-auto min-h-[60vh]" />;
   }
@@ -187,6 +203,31 @@ export default function StatsPage() {
           </h3>
           <Heatmap logs={state.logs} />
         </div>
+
+        {/* Rutinas flexibles */}
+        {flexStats.length > 0 && (
+          <div className="glass-card p-5 lg:p-6 lg:col-span-2">
+            <h3 className="text-[12px] font-medium text-[var(--text-tertiary)] uppercase tracking-wider mb-4">
+              Rutinas flexibles
+            </h3>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {flexStats.map((f) => (
+                <div key={f.id} className="flex items-center gap-3 rounded-xl bg-white/[0.02] border border-[var(--border)] px-4 py-3">
+                  <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: f.color }} />
+                  <span className="flex-1 text-[13px] text-[var(--text-primary)] truncate">{f.name}</span>
+                  <div className="text-right shrink-0 w-14">
+                    <p className="stat-number text-lg leading-none" style={{ color: f.color }}>{f.week}</p>
+                    <p className="text-[10px] text-[var(--text-tertiary)]">esta semana</p>
+                  </div>
+                  <div className="text-right shrink-0 w-12">
+                    <p className="stat-number text-lg leading-none text-[var(--text-secondary)]">{f.month}</p>
+                    <p className="text-[10px] text-[var(--text-tertiary)]">30 días</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* Logros */}
         <div className="glass-card p-5 lg:p-6 lg:col-span-2">

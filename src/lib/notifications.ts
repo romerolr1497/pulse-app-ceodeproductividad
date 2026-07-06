@@ -18,11 +18,14 @@ export async function registerServiceWorker(): Promise<ServiceWorkerRegistration
 
 export async function requestNotificationPermission(): Promise<NotificationPermission> {
   if (!notificationsSupported()) return "denied";
+  if (Notification.permission === "granted") return "granted";
   try {
-    return await Notification.requestPermission();
+    await Notification.requestPermission();
   } catch {
-    return "denied";
+    // Safari antiguo usa callback y la promesa puede rechazar/resolver undefined.
   }
+  // Leemos el valor real: algunos navegadores resuelven la promesa con undefined.
+  return Notification.permission;
 }
 
 function timeToTodayMs(time: string): number {

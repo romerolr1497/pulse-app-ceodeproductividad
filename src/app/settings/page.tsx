@@ -5,7 +5,14 @@ import { Bell, Palette, Database, CalendarClock, Download, Upload, Trash2, Cloud
 import { useStore, useSync } from "@/lib/store";
 import { RoutineManager } from "@/components/RoutineManager";
 import { AccountSync } from "@/components/AccountSync";
-import { enablePush, disablePush, syncPushRoutines } from "@/lib/push";
+import {
+  enablePush,
+  disablePush,
+  syncPushRoutines,
+  getPushStatus,
+  sendServerTestPush,
+  type PushCloudStatus,
+} from "@/lib/push";
 import {
   requestNotificationPermission,
   registerServiceWorker,
@@ -14,18 +21,43 @@ import {
   notificationsSupported,
 } from "@/lib/notifications";
 
+function StatusRow({ label, ok, text, warn }: { label: string; ok: boolean; text: string; warn?: boolean }) {
+  const color = ok ? "var(--success)" : warn ? "var(--accent)" : "var(--danger)";
+  return (
+    <div className="flex items-center justify-between text-[11px]">
+      <span className="text-[var(--text-secondary)]">{label}</span>
+      <span className="flex items-center gap-1.5 font-medium" style={{ color }}>
+        <span className="w-1.5 h-1.5 rounded-full" style={{ background: color }} />
+        {text}
+      </span>
+    </div>
+  );
+}
+
 export default function SettingsPage() {
   const { state, dispatch } = useStore();
   const sync = useSync();
   const [perm, setPerm] = useState<NotificationPermission | "unsupported">("default");
   const [pushBusy, setPushBusy] = useState(false);
   const [pushMsg, setPushMsg] = useState<string | null>(null);
+  const [testBusy, setTestBusy] = useState(false);
+  const [cloud, setCloud] = useState<PushCloudStatus | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+
+  const refreshCloud = async () => {
+    setCloud(await getPushStatus(sync.session?.user.id ?? null));
+  };
 
   useEffect(() => {
     if (!notificationsSupported()) setPerm("unsupported");
     else setPerm(Notification.permission);
   }, []);
+
+  // Carga el diagnóstico de push cuando cambia la sesión o el estado de notifs.
+  useEffect(() => {
+    refreshCloud();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sync.session, state.settings.notifications]);
 
   // Mantener el snapshot de rutinas/anticipación al día en el servidor push.
   useEffect(() => {
@@ -73,8 +105,48 @@ export default function SettingsPage() {
       } else {
         setPushMsg("Avisos locales activos. Iniciá sesión arriba para recibirlos con la app cerrada.");
       }
+      await refreshCloud();
     }
     setPushBusy(false);
+  }
+
+  // Fuerza el registro (o re-registro) de la suscripción en la nube.
+  async function registerInCloud() {
+    if (!sync.session) {
+      setPushMsg("Iniciá sesión arriba para registrar los avisos en la nube.");
+      return;
+    }
+    setPushBusy(true);
+    setPushMsg(null);
+    await registerServiceWorker();
+    const permRes = await requestNotificationPermission();
+    setPerm(permRes);
+    if (permRes !== "granted") {
+      setPushMsg("Permiso de notificaciones denegado.");
+      setPushBusy(false);
+      return;
+    }
+    const { error } = await enablePush(sync.session.user.id, state.routines, {
+      notifyMinutes: state.settings.notifyMinutesBefore,
+      wakeTime: state.settings.wakeTime,
+      morningMotivation: state.settings.morningMotivation,
+    });
+    setPushMsg(error ? `No se pudo registrar: ${error}` : "Registrado en la nube ✅");
+    await refreshCloud();
+    setPushBusy(false);
+  }
+
+  // Prueba de push real (desde el servidor, cadena completa).
+  async function testRealPush() {
+    setTestBusy(true);
+    setPushMsg(null);
+    const { error } = await sendServerTestPush();
+    setPushMsg(
+      error
+        ? `Prueba real falló: ${error}`
+        : "Prueba real enviada. Debería llegarte en unos segundos (probá con la app en segundo plano)."
+    );
+    setTestBusy(false);
   }
 
   function exportData() {
@@ -213,18 +285,56 @@ export default function SettingsPage() {
                   )}
 
                   <div className="h-px bg-[var(--border)] my-1" />
-                  <button
-                    onClick={sendTestNotification}
-                    className="text-[11px] text-[var(--accent)] hover:underline"
-                  >
-                    Enviar notificación de prueba
-                  </button>
+
+                  {/* Panel de diagnóstico */}
+                  <div className="rounded-lg bg-white/[0.02] border border-[var(--border)] p-3 space-y-1.5">
+                    <p className="text-[10px] font-medium text-[var(--text-tertiary)] uppercase tracking-wider mb-1">
+                      Estado de los avisos
+                    </p>
+                    <StatusRow label="Permiso del navegador" ok={perm === "granted"} text={perm === "granted" ? "concedido" : perm === "denied" ? "bloqueado" : "sin conceder"} />
+                    <StatusRow label="Sesión iniciada" ok={!!sync.session} text={sync.session ? "sí" : "no — iniciá sesión arriba"} />
+                    <StatusRow label="Registrado en la nube" ok={!!cloud?.registeredInCloud} text={cloud?.registeredInCloud ? "sí" : "no"} />
+                    {cloud && !cloud.standalone && (
+                      <StatusRow label="App instalada (iPhone)" ok={false} text="recomendado en iOS" warn />
+                    )}
+                  </div>
+
+                  {!cloud?.registeredInCloud && sync.session && (
+                    <p className="text-[10px] text-[var(--accent)] leading-relaxed">
+                      Tus avisos no están registrados en la nube. Tocá “Registrar en la nube” para recibirlos con la app cerrada.
+                    </p>
+                  )}
+
+                  <div className="flex flex-wrap gap-2 pt-0.5">
+                    <button
+                      onClick={registerInCloud}
+                      disabled={pushBusy}
+                      className="px-3 py-1.5 bg-[var(--accent)] text-black text-[11px] font-medium rounded-lg hover:bg-[var(--accent-muted)] transition disabled:opacity-50"
+                    >
+                      {pushBusy ? "Registrando…" : "Registrar en la nube"}
+                    </button>
+                    <button
+                      onClick={testRealPush}
+                      disabled={testBusy}
+                      className="px-3 py-1.5 bg-white/[0.04] text-[var(--text-secondary)] text-[11px] font-medium rounded-lg hover:bg-white/[0.08] transition disabled:opacity-50"
+                    >
+                      {testBusy ? "Enviando…" : "Probar aviso real (nube)"}
+                    </button>
+                    <button
+                      onClick={sendTestNotification}
+                      className="px-3 py-1.5 bg-white/[0.04] text-[var(--text-tertiary)] text-[11px] font-medium rounded-lg hover:bg-white/[0.08] transition"
+                    >
+                      Prueba local
+                    </button>
+                  </div>
+
                   {pushMsg && (
                     <p className="text-[10px] text-[var(--text-secondary)] leading-relaxed">{pushMsg}</p>
                   )}
                   <p className="text-[10px] text-[var(--text-tertiary)] leading-relaxed">
-                    Con sesión iniciada, los avisos llegan aunque Pulse esté cerrada. En iPhone instalá Pulse en
-                    la pantalla de inicio (iOS 16.4+).
+                    “Prueba local” abre un aviso al toque (app abierta). “Prueba real (nube)” lo manda desde el
+                    servidor: si te llega con la app en segundo plano, todo funciona. En iPhone instalá Pulse en la
+                    pantalla de inicio (iOS 16.4+).
                   </p>
                 </>
               )}

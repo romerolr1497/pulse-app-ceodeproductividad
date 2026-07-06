@@ -29,6 +29,22 @@ const STOIC_QUOTES = [
 ];
 
 type Routine = { id?: string; name: string; startTime: string; days?: number[] | null };
+type CalEvent = {
+  id: string;
+  title: string;
+  date: string;
+  time?: string;
+  notifyMinutes?: number;
+  completed?: boolean;
+};
+type Reserva = {
+  id: string;
+  title: string;
+  date: string;
+  startTime: string;
+  endTime?: string;
+  notifyMinutes?: number;
+};
 type SubRow = {
   id: string;
   user_id: string;
@@ -80,9 +96,15 @@ function parseHHMM(s: string): number | null {
 }
 
 async function handle(req: NextRequest) {
+  const rid = Math.random().toString(36).slice(2, 8);
+  const t0 = Date.now();
+  const log = (msg: string, extra?: unknown) =>
+    console.log(`[cron:${rid}] ${msg}`, extra !== undefined ? JSON.stringify(extra) : "");
+
   const url = new URL(req.url);
   const secret = url.searchParams.get("secret") || req.headers.get("x-cron-secret");
   if (!process.env.CRON_SECRET || secret !== process.env.CRON_SECRET) {
+    log("401 unauthorized");
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
 
@@ -109,30 +131,73 @@ async function handle(req: NextRequest) {
     .from("push_subscriptions")
     .select("id, user_id, endpoint, subscription, routines, notify_minutes, wake_time, morning_motivation, tz");
   if (error) {
+    log("ERROR leyendo subs", { msg: error.message });
     return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+
+  // Eventos/turnos viven en app_state (fuente única). Los leemos para avisar antes.
+  const eventsByUser = new Map<string, CalEvent[]>();
+  const reservationsByUser = new Map<string, Reserva[]>();
+  {
+    const { data: stateRows } = await admin.from("app_state").select("user_id, data");
+    for (const sr of (stateRows ?? []) as {
+      user_id: string;
+      data: { events?: CalEvent[]; reservations?: Reserva[] };
+    }[]) {
+      const evs = Array.isArray(sr.data?.events) ? sr.data.events : [];
+      if (evs.length) eventsByUser.set(sr.user_id, evs);
+      const res = Array.isArray(sr.data?.reservations) ? sr.data.reservations : [];
+      if (res.length) reservationsByUser.set(sr.user_id, res);
+    }
   }
 
   const rows = (data ?? []) as SubRow[];
   const now = new Date();
   let sent = 0;
   let morning = 0;
+  let events = 0;
+  let reservations = 0;
   let removed = 0;
+
+  log("start", {
+    subs: rows.length,
+    usersWithEvents: eventsByUser.size,
+    usersWithReservations: reservationsByUser.size,
+    nowUtc: now.toISOString(),
+  });
 
   for (const row of rows) {
     const tz = row.tz || "America/Argentina/Buenos_Aires";
     const nowMin = minutesOfDayInTz(now, tz);
     const dow = dayOfWeekInTz(now, tz);
+    log("row", {
+      user: row.user_id.slice(0, 8),
+      tz,
+      nowMin,
+      dow,
+      routines: row.routines?.length ?? 0,
+      notifyMin: row.notify_minutes,
+      wake: row.wake_time,
+      morningOn: row.morning_motivation,
+    });
 
     // 1) Buenos días motivacional a la hora de despertar
     const wake = row.wake_time ? parseHHMM(row.wake_time) : null;
     if (row.morning_motivation && wake !== null && wake >= nowMin && wake < nowMin + WINDOW_MIN) {
       const quote = STOIC_QUOTES[Math.floor(Math.random() * STOIC_QUOTES.length)];
-      const goodMorning = JSON.stringify({ title: "Buenos días ☀️", body: quote, url: "/" });
+      const goodMorning = JSON.stringify({
+        title: "Buenos días ☀️",
+        body: quote,
+        url: "/",
+        tag: `pulse-morning-${dateStrInTz(now, tz)}`,
+      });
       try {
         await webpush.sendNotification(row.subscription, goodMorning);
         morning++;
+        log("morning sent", { user: row.user_id.slice(0, 8) });
       } catch (err: unknown) {
         const status = (err as { statusCode?: number })?.statusCode;
+        log("morning FAIL", { status });
         if (status === 404 || status === 410) {
           await admin.from("push_subscriptions").delete().eq("id", row.id);
           removed++;
@@ -141,7 +206,75 @@ async function handle(req: NextRequest) {
       }
     }
 
-    // 2) Recordatorios de rutina (respetando los días activos)
+    // 2) Recordatorios de eventos/turnos con aviso (viven en app_state)
+    const userEvents = eventsByUser.get(row.user_id) ?? [];
+    const todayStr = dateStrInTz(now, tz);
+    for (const ev of userEvents) {
+      if (ev.completed) continue;
+      if (ev.date !== todayStr) continue;
+      if (!ev.time || ev.notifyMinutes === undefined || ev.notifyMinutes === null) continue;
+      const evMin = parseHHMM(ev.time);
+      if (evMin === null) continue;
+      const target = evMin - ev.notifyMinutes;
+      if (!(target >= nowMin && target < nowMin + WINDOW_MIN)) continue;
+      const evBody =
+        ev.notifyMinutes > 0
+          ? `${ev.title} — en ${ev.notifyMinutes} min (${ev.time})`
+          : `${ev.title} — ahora (${ev.time})`;
+      const evPayload = JSON.stringify({
+        title: "Pulse · Agenda",
+        body: evBody,
+        url: "/agenda",
+        tag: `event-${ev.id}`,
+      });
+      try {
+        await webpush.sendNotification(row.subscription, evPayload);
+        events++;
+        log("event sent", { title: ev.title, time: ev.time });
+      } catch (err: unknown) {
+        const status = (err as { statusCode?: number })?.statusCode;
+        log("event FAIL", { status, title: ev.title });
+        if (status === 404 || status === 410) {
+          await admin.from("push_subscriptions").delete().eq("id", row.id);
+          removed++;
+        }
+      }
+    }
+
+    // 2b) Recordatorios de reservas (bloques de tiempo con aviso)
+    const userReservations = reservationsByUser.get(row.user_id) ?? [];
+    for (const rv of userReservations) {
+      if (rv.date !== todayStr) continue;
+      if (!rv.startTime || rv.notifyMinutes === undefined || rv.notifyMinutes === null) continue;
+      const rvMin = parseHHMM(rv.startTime);
+      if (rvMin === null) continue;
+      const target = rvMin - rv.notifyMinutes;
+      if (!(target >= nowMin && target < nowMin + WINDOW_MIN)) continue;
+      const rvBody =
+        rv.notifyMinutes > 0
+          ? `${rv.title} — en ${rv.notifyMinutes} min (${rv.startTime})`
+          : `${rv.title} — ahora (${rv.startTime})`;
+      const rvPayload = JSON.stringify({
+        title: "Pulse · Reserva",
+        body: rvBody,
+        url: "/agenda",
+        tag: `reservation-${rv.id}`,
+      });
+      try {
+        await webpush.sendNotification(row.subscription, rvPayload);
+        reservations++;
+        log("reservation sent", { title: rv.title, start: rv.startTime });
+      } catch (err: unknown) {
+        const status = (err as { statusCode?: number })?.statusCode;
+        log("reservation FAIL", { status, title: rv.title });
+        if (status === 404 || status === 410) {
+          await admin.from("push_subscriptions").delete().eq("id", row.id);
+          removed++;
+        }
+      }
+    }
+
+    // 3) Recordatorios de rutina (respetando los días activos)
     const due = (row.routines ?? []).find((r) => {
       if (Array.isArray(r.days) && r.days.length > 0 && !r.days.includes(dow)) return false;
       const start = parseHHMM(r.startTime);
@@ -171,12 +304,21 @@ async function handle(req: NextRequest) {
       );
     }
 
-    const payload = JSON.stringify({ title: "Pulse", body, url: "/", routineId: due.id, token });
+    const payload = JSON.stringify({
+      title: "Pulse",
+      body,
+      url: "/",
+      routineId: due.id,
+      token,
+      tag: due.id ? `routine-${due.id}` : "pulse-routine",
+    });
     try {
       await webpush.sendNotification(row.subscription, payload);
       sent++;
+      log("routine sent", { name: due.name, start: due.startTime });
     } catch (err: unknown) {
       const status = (err as { statusCode?: number })?.statusCode;
+      log("routine FAIL", { status, name: due.name });
       if (status === 404 || status === 410) {
         await admin.from("push_subscriptions").delete().eq("id", row.id);
         removed++;
@@ -184,7 +326,8 @@ async function handle(req: NextRequest) {
     }
   }
 
-  return NextResponse.json({ ok: true, checked: rows.length, sent, morning, removed });
+  log("done", { ms: Date.now() - t0, checked: rows.length, sent, morning, events, reservations, removed });
+  return NextResponse.json({ ok: true, checked: rows.length, sent, morning, events, reservations, removed });
 }
 
 export async function GET(req: NextRequest) {

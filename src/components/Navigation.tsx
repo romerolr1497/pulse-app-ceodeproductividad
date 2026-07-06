@@ -2,11 +2,12 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { LayoutDashboard, FolderKanban, BarChart3, Settings, ChevronUp, Sparkles } from "lucide-react";
+import { LayoutDashboard, FolderKanban, BarChart3, Settings, ChevronUp, Sparkles, CalendarDays } from "lucide-react";
 import { Logo } from "./Logo";
 
 const navItems = [
   { href: "/", icon: LayoutDashboard, label: "Hoy" },
+  { href: "/agenda", icon: CalendarDays, label: "Agenda" },
   { href: "/beat", icon: Sparkles, label: "Beat" },
   { href: "/projects", icon: FolderKanban, label: "Proyectos" },
   { href: "/stats", icon: BarChart3, label: "Stats" },
@@ -78,14 +79,14 @@ export function MobileNav() {
 
   return (
     <nav className="lg:hidden fixed bottom-0 left-0 right-0 bg-[var(--surface)]/90 backdrop-blur-2xl border-t border-[var(--border)] z-50 safe-bottom">
-      <div className="flex items-center justify-around px-2 py-2">
+      <div className="flex items-center justify-around px-1 py-2">
         {navItems.map((item) => {
           const isActive = pathname === item.href;
           return (
             <Link
               key={item.href}
               href={item.href}
-              className={`flex flex-col items-center gap-1 px-4 py-1.5 rounded-xl transition-all duration-200 ${
+              className={`flex flex-col items-center gap-1 px-2 py-1.5 rounded-xl transition-all duration-200 ${
                 isActive ? "text-[var(--accent)]" : "text-[var(--text-tertiary)]"
               }`}
             >

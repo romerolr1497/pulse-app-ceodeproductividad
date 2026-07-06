@@ -1,7 +1,7 @@
 "use client";
 
 import { createContext, useContext, useReducer, useEffect, useState, useRef, useCallback, type ReactNode } from "react";
-import type { RoutineBlock, Task, Project, DayLog, AppSettings } from "./types";
+import type { RoutineBlock, Task, Project, DayLog, AppSettings, CalendarEvent, FlexRoutine, Reservation } from "./types";
 import { supabase, supabaseEnabled } from "./supabase";
 import type { Session } from "@supabase/supabase-js";
 
@@ -9,6 +9,9 @@ interface State {
   routines: RoutineBlock[];
   tasks: Task[];
   projects: Project[];
+  events: CalendarEvent[];
+  flexRoutines: FlexRoutine[];
+  reservations: Reservation[];
   logs: DayLog[];
   settings: AppSettings;
   lastActiveDate: string; // YYYY-MM-DD del último día con actividad
@@ -29,6 +32,17 @@ type Action =
   | { type: "ADD_PROJECT_TASK"; projectId: string; task: Task }
   | { type: "TOGGLE_PROJECT_TASK"; projectId: string; taskId: string }
   | { type: "DELETE_PROJECT_TASK"; projectId: string; taskId: string }
+  | { type: "ADD_EVENT"; event: CalendarEvent }
+  | { type: "UPDATE_EVENT"; event: CalendarEvent }
+  | { type: "DELETE_EVENT"; id: string }
+  | { type: "TOGGLE_EVENT"; id: string }
+  | { type: "ADD_FLEX_ROUTINE"; flexRoutine: FlexRoutine }
+  | { type: "UPDATE_FLEX_ROUTINE"; flexRoutine: FlexRoutine }
+  | { type: "DELETE_FLEX_ROUTINE"; id: string }
+  | { type: "TOGGLE_FLEX_ROUTINE"; id: string; date: string }
+  | { type: "ADD_RESERVATION"; reservation: Reservation }
+  | { type: "UPDATE_RESERVATION"; reservation: Reservation }
+  | { type: "DELETE_RESERVATION"; id: string }
   | { type: "SAVE_DAY_LOG"; log: DayLog }
   | { type: "UPDATE_SETTINGS"; settings: Partial<AppSettings> }
   | { type: "SET_NOTE"; date: string; text: string }
@@ -61,6 +75,9 @@ const initialState: State = {
   routines: defaultRoutines,
   tasks: [],
   projects: defaultProjects,
+  events: [],
+  flexRoutines: [],
+  reservations: [],
   logs: [],
   settings: defaultSettings,
   lastActiveDate: "",
@@ -170,6 +187,91 @@ function reducer(state: State, action: Action): State {
         logs: [...state.logs.filter((l) => l.date !== action.log.date), action.log],
       };
 
+    case "ADD_EVENT":
+      return {
+        ...state,
+        events: [...state.events, action.event].sort(
+          (a, b) =>
+            a.date.localeCompare(b.date) ||
+            (a.time ?? "").localeCompare(b.time ?? "")
+        ),
+      };
+
+    case "UPDATE_EVENT":
+      return {
+        ...state,
+        events: state.events
+          .map((e) => (e.id === action.event.id ? action.event : e))
+          .sort(
+            (a, b) =>
+              a.date.localeCompare(b.date) ||
+              (a.time ?? "").localeCompare(b.time ?? "")
+          ),
+      };
+
+    case "DELETE_EVENT":
+      return { ...state, events: state.events.filter((e) => e.id !== action.id) };
+
+    case "TOGGLE_EVENT":
+      return {
+        ...state,
+        events: state.events.map((e) =>
+          e.id === action.id ? { ...e, completed: !e.completed } : e
+        ),
+      };
+
+    case "ADD_FLEX_ROUTINE":
+      return { ...state, flexRoutines: [...state.flexRoutines, action.flexRoutine] };
+
+    case "UPDATE_FLEX_ROUTINE":
+      return {
+        ...state,
+        flexRoutines: state.flexRoutines.map((f) =>
+          f.id === action.flexRoutine.id ? action.flexRoutine : f
+        ),
+      };
+
+    case "DELETE_FLEX_ROUTINE":
+      return { ...state, flexRoutines: state.flexRoutines.filter((f) => f.id !== action.id) };
+
+    case "TOGGLE_FLEX_ROUTINE":
+      return {
+        ...state,
+        flexRoutines: state.flexRoutines.map((f) => {
+          if (f.id !== action.id) return f;
+          const done = f.completedDates.includes(action.date);
+          return {
+            ...f,
+            completedDates: done
+              ? f.completedDates.filter((d) => d !== action.date)
+              : [...f.completedDates, action.date],
+          };
+        }),
+      };
+
+    case "ADD_RESERVATION":
+      return {
+        ...state,
+        reservations: [...state.reservations, action.reservation].sort(
+          (a, b) =>
+            a.date.localeCompare(b.date) || a.startTime.localeCompare(b.startTime)
+        ),
+      };
+
+    case "UPDATE_RESERVATION":
+      return {
+        ...state,
+        reservations: state.reservations
+          .map((r) => (r.id === action.reservation.id ? action.reservation : r))
+          .sort(
+            (a, b) =>
+              a.date.localeCompare(b.date) || a.startTime.localeCompare(b.startTime)
+          ),
+      };
+
+    case "DELETE_RESERVATION":
+      return { ...state, reservations: state.reservations.filter((r) => r.id !== action.id) };
+
     case "UPDATE_SETTINGS":
       return { ...state, settings: { ...state.settings, ...action.settings } };
 
@@ -237,6 +339,9 @@ const USER_ACTION_TYPES = new Set<Action["type"]>([
   "TOGGLE_ROUTINE", "ADD_ROUTINE", "UPDATE_ROUTINE", "DELETE_ROUTINE",
   "ADD_TASK", "TOGGLE_TASK", "DELETE_TASK",
   "ADD_PROJECT", "DELETE_PROJECT", "ADD_PROJECT_TASK", "TOGGLE_PROJECT_TASK", "DELETE_PROJECT_TASK",
+  "ADD_EVENT", "UPDATE_EVENT", "DELETE_EVENT", "TOGGLE_EVENT",
+  "ADD_FLEX_ROUTINE", "UPDATE_FLEX_ROUTINE", "DELETE_FLEX_ROUTINE", "TOGGLE_FLEX_ROUTINE",
+  "ADD_RESERVATION", "UPDATE_RESERVATION", "DELETE_RESERVATION",
   "SAVE_DAY_LOG", "UPDATE_SETTINGS", "SET_NOTE", "RESET_ALL",
 ]);
 

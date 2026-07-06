@@ -26,6 +26,14 @@ const ALLOWED_ACTIONS = new Set<BeatAction["type"]>([
   "UPDATE_ROUTINE",
   "DELETE_ROUTINE",
   "TOGGLE_ROUTINE",
+  "ADD_EVENT",
+  "UPDATE_EVENT",
+  "DELETE_EVENT",
+  "ADD_RESERVATION",
+  "UPDATE_RESERVATION",
+  "DELETE_RESERVATION",
+  "ADD_FLEX_ROUTINE",
+  "TOGGLE_FLEX_ROUTINE",
   "SET_NOTE",
   "UPDATE_SETTINGS",
 ]);
@@ -35,7 +43,7 @@ interface SpeechRecognitionLike {
   lang: string;
   interimResults: boolean;
   maxAlternatives: number;
-  onresult: (e: { results: { [i: number]: { [j: number]: { transcript: string } } } }) => void;
+  onresult: (e: { results: { length: number; [i: number]: { [j: number]: { transcript: string } } } }) => void;
   onend: () => void;
   onerror: () => void;
   start: () => void;
@@ -44,9 +52,9 @@ interface SpeechRecognitionLike {
 
 const SUGGESTIONS = [
   "Agregá una tarea: llamar al contador",
-  "Sumá al proyecto Trading: revisar backtest",
-  "Creá una rutina Lectura de 22:00 a 22:30",
-  "¿Qué tengo pendiente hoy?",
+  "Agendá turno dentista el jueves a las 10",
+  "Reservá de 15 a 17 para el proyecto",
+  "Ya hice deporte",
 ];
 
 export function Beat() {
@@ -57,6 +65,7 @@ export function Beat() {
   const [speechOk, setSpeechOk] = useState(false);
   const [loading, setLoading] = useState(false);
   const recRef = useRef<SpeechRecognitionLike | null>(null);
+  const finalRef = useRef("");
   const scrollRef = useRef<HTMLDivElement>(null);
   const stateRef = useRef(state);
   stateRef.current = state;
@@ -78,6 +87,8 @@ export function Beat() {
     const now = new Date();
     const hh = String(now.getHours()).padStart(2, "0");
     const mm = String(now.getMinutes()).padStart(2, "0");
+    const dayNames = ["domingo", "lunes", "martes", "miércoles", "jueves", "viernes", "sábado"];
+    const today = localDateStr();
     const pendingLoose = s.tasks
       .filter((t) => !t.completed)
       .map((t) => ({ id: t.id, title: t.title }));
@@ -86,9 +97,33 @@ export function Beat() {
         .filter((t) => !t.completed)
         .map((t) => ({ id: t.id, title: t.title, projectId: p.id }))
     );
+    // Solo eventos de hoy en adelante para no inflar el contexto
+    const upcomingEvents = s.events
+      .filter((e) => e.date >= today)
+      .slice(0, 40)
+      .map((e) => ({
+        id: e.id,
+        title: e.title,
+        date: e.date,
+        time: e.time,
+        notes: e.notes,
+        notifyMinutes: e.notifyMinutes,
+      }));
+    const upcomingReservations = s.reservations
+      .filter((r) => r.date >= today)
+      .slice(0, 40)
+      .map((r) => ({
+        id: r.id,
+        title: r.title,
+        date: r.date,
+        startTime: r.startTime,
+        endTime: r.endTime,
+        notifyMinutes: r.notifyMinutes,
+      }));
     return {
-      today: localDateStr(),
+      today,
       now: `${hh}:${mm}`,
+      weekday: dayNames[now.getDay()],
       projects: s.projects.map((p) => ({ id: p.id, name: p.name })),
       routines: s.routines.map((r) => ({
         id: r.id,
@@ -98,6 +133,9 @@ export function Beat() {
         days: r.days,
       })),
       pendingTasks: [...pendingLoose, ...pendingProject],
+      events: upcomingEvents,
+      reservations: upcomingReservations,
+      flexRoutines: s.flexRoutines.map((f) => ({ id: f.id, name: f.name })),
     };
   }, []);
 
@@ -184,33 +222,47 @@ export function Beat() {
     [input, loading, msgs, buildContext, runFallback, dispatch]
   );
 
-  function toggleMic() {
+  // Micrófono estilo WhatsApp/Telegram: mantené apretado para grabar y soltá
+  // para enviar. startRec arranca la escucha; stopRec la corta y al terminar
+  // (onend) manda automáticamente lo que se reconoció.
+  function startRec() {
     const w = window as unknown as {
       SpeechRecognition?: new () => SpeechRecognitionLike;
       webkitSpeechRecognition?: new () => SpeechRecognitionLike;
     };
     const SR = w.SpeechRecognition || w.webkitSpeechRecognition;
-    if (!SR) return;
-
-    if (listening) {
-      recRef.current?.stop();
-      return;
-    }
+    if (!SR || listening || loading) return;
 
     const rec = new SR();
     rec.lang = "es-AR";
-    rec.interimResults = false;
+    rec.interimResults = true;
     rec.maxAlternatives = 1;
+    finalRef.current = "";
     rec.onresult = (e) => {
-      const transcript = e.results[0][0].transcript;
-      setInput(transcript);
-      void send(transcript);
+      let text = "";
+      for (let i = 0; i < e.results.length; i++) {
+        text += e.results[i][0].transcript;
+      }
+      finalRef.current = text;
+      setInput(text);
     };
-    rec.onend = () => setListening(false);
+    rec.onend = () => {
+      setListening(false);
+      const text = finalRef.current.trim();
+      if (text) void send(text);
+    };
     rec.onerror = () => setListening(false);
     recRef.current = rec;
     setListening(true);
-    rec.start();
+    try {
+      rec.start();
+    } catch {
+      setListening(false);
+    }
+  }
+
+  function stopRec() {
+    recRef.current?.stop();
   }
 
   return (
@@ -290,11 +342,23 @@ export function Beat() {
         {speechOk && (
           <button
             type="button"
-            onClick={toggleMic}
-            aria-label="Dictar por voz"
-            className={`shrink-0 w-10 h-10 flex items-center justify-center rounded-xl transition-colors ${
+            onPointerDown={(e) => {
+              e.preventDefault();
+              try {
+                (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+              } catch {}
+              startRec();
+            }}
+            onPointerUp={(e) => {
+              e.preventDefault();
+              stopRec();
+            }}
+            onPointerCancel={() => stopRec()}
+            onContextMenu={(e) => e.preventDefault()}
+            aria-label="Mantené apretado para dictar y soltá para enviar"
+            className={`shrink-0 w-10 h-10 flex items-center justify-center rounded-xl transition-transform select-none touch-none ${
               listening
-                ? "bg-[var(--danger)] text-white animate-pulse"
+                ? "bg-[var(--danger)] text-white animate-pulse scale-110"
                 : "bg-[rgba(255,255,255,0.04)] text-[var(--text-secondary)] hover:text-[var(--accent)]"
             }`}
           >
@@ -311,7 +375,11 @@ export function Beat() {
         </button>
       </form>
 
-      {!speechOk && (
+      {speechOk ? (
+        <p className="text-[11px] text-[var(--text-tertiary)] mt-2 shrink-0 text-center">
+          Mantené apretado el 🎤 y soltá para enviar.
+        </p>
+      ) : (
         <p className="text-[11px] text-[var(--text-tertiary)] mt-2 shrink-0">
           Para dictar: tocá el campo y usá el 🎤 del teclado de tu celular.
         </p>

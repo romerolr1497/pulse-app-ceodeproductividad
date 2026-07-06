@@ -1,5 +1,5 @@
 // Pulse service worker — notificaciones de rutina + soporte offline
-const CACHE = "pulse-v4";
+const CACHE = "pulse-v5";
 
 self.addEventListener("install", (event) => {
   self.skipWaiting();
@@ -149,11 +149,18 @@ self.addEventListener("push", (event) => {
     if (event.data) payload = event.data.json();
   } catch (_) {}
   const actions = payload.token ? [{ action: "done", title: "✅ Ya lo hice" }] : [];
+  // Un tag estable evita duplicados: si el push llega dos veces (o coincide con
+  // la notificación local), la segunda REEMPLAZA a la primera en vez de sumarse.
+  const tag =
+    payload.tag ||
+    (payload.routineId ? `routine-${payload.routineId}` : "pulse-push");
   event.waitUntil(
     self.registration.showNotification(payload.title || "Pulse", {
       body: payload.body || "",
       icon: "/icon-192.png",
       badge: "/icon-192.png",
+      tag,
+      renotify: true,
       actions,
       data: { url: payload.url || "/", routineId: payload.routineId, token: payload.token },
     })

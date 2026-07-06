@@ -1,9 +1,11 @@
 import type OpenAI from "openai";
+import type { CalendarEvent, Reservation, FlexRoutine } from "../types";
 
 // Contexto que el cliente envía para que Beat resuelva nombres → ids
 export interface BeatContext {
   today: string; // YYYY-MM-DD (hora local)
   now: string; // HH:mm
+  weekday: string; // nombre del día de hoy (ej "lunes")
   projects: { id: string; name: string }[];
   routines: {
     id: string;
@@ -13,6 +15,23 @@ export interface BeatContext {
     days?: number[];
   }[];
   pendingTasks: { id: string; title: string; projectId?: string }[];
+  events: {
+    id: string;
+    title: string;
+    date: string;
+    time?: string;
+    notes?: string;
+    notifyMinutes?: number;
+  }[];
+  reservations: {
+    id: string;
+    title: string;
+    date: string;
+    startTime: string;
+    endTime?: string;
+    notifyMinutes?: number;
+  }[];
+  flexRoutines: { id: string; name: string }[];
 }
 
 // Acciones que Beat puede emitir (subconjunto seguro del reducer del store)
@@ -29,6 +48,14 @@ export type BeatAction =
   | { type: "UPDATE_ROUTINE"; routine: NewRoutine }
   | { type: "DELETE_ROUTINE"; id: string }
   | { type: "TOGGLE_ROUTINE"; id: string }
+  | { type: "ADD_EVENT"; event: CalendarEvent }
+  | { type: "UPDATE_EVENT"; event: CalendarEvent }
+  | { type: "DELETE_EVENT"; id: string }
+  | { type: "ADD_RESERVATION"; reservation: Reservation }
+  | { type: "UPDATE_RESERVATION"; reservation: Reservation }
+  | { type: "DELETE_RESERVATION"; id: string }
+  | { type: "ADD_FLEX_ROUTINE"; flexRoutine: FlexRoutine }
+  | { type: "TOGGLE_FLEX_ROUTINE"; id: string; date: string }
   | { type: "SET_NOTE"; date: string; text: string }
   | { type: "UPDATE_SETTINGS"; settings: Record<string, unknown> };
 
@@ -280,6 +307,161 @@ export const BEAT_TOOLS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
   {
     type: "function",
     function: {
+      name: "add_event",
+      description:
+        "Agendar un evento o turno puntual con fecha exacta (ej: turno médico, reunión, cumpleaños). Distinto de una rutina recurrente.",
+      parameters: {
+        type: "object",
+        properties: {
+          title: { type: "string", description: "De qué es el evento" },
+          date: {
+            type: "string",
+            description:
+              "Fecha en formato YYYY-MM-DD. Calculala a partir de la fecha de hoy provista (ej 'mañana', 'el jueves', 'el 15').",
+          },
+          time: { type: "string", description: "Hora HH:mm (24h). Omitir si es todo el día." },
+          notes: { type: "string", description: "Nota opcional" },
+          notifyMinutes: {
+            type: "integer",
+            description: "Avisar estos minutos antes (ej 30). Omitir si no quiere aviso.",
+          },
+        },
+        required: ["title", "date"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "update_event",
+      description:
+        "Editar un evento/turno existente identificado por su título (y opcionalmente su fecha). Solo cambia los campos provistos.",
+      parameters: {
+        type: "object",
+        properties: {
+          title: { type: "string", description: "Título actual del evento a editar" },
+          onDate: { type: "string", description: "Fecha actual del evento YYYY-MM-DD (para desambiguar)" },
+          newTitle: { type: "string" },
+          date: { type: "string", description: "Nueva fecha YYYY-MM-DD" },
+          time: { type: "string", description: "Nueva hora HH:mm" },
+          notes: { type: "string" },
+          notifyMinutes: { type: "integer" },
+        },
+        required: ["title"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "delete_event",
+      description: "Borrar un evento/turno por su título (y opcionalmente su fecha).",
+      parameters: {
+        type: "object",
+        properties: {
+          title: { type: "string" },
+          onDate: { type: "string", description: "Fecha del evento YYYY-MM-DD (opcional)" },
+        },
+        required: ["title"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "add_reservation",
+      description:
+        "Reservar un bloque de tiempo con prioridad para un día (ej: 'reservá de 15 a 17 para trabajar en el proyecto X'). Es tentativo y se puede pisar con un turno/evento; NO es una tarea ni un evento fijo.",
+      parameters: {
+        type: "object",
+        properties: {
+          title: { type: "string", description: "Para qué es el bloque reservado" },
+          date: {
+            type: "string",
+            description: "Fecha YYYY-MM-DD. Calculala a partir de hoy (ej 'mañana', 'el jueves').",
+          },
+          startTime: { type: "string", description: "Hora inicio HH:mm (24h)" },
+          endTime: { type: "string", description: "Hora fin HH:mm (24h), opcional" },
+          notes: { type: "string", description: "Nota opcional" },
+          notifyMinutes: {
+            type: "integer",
+            description: "Avisar estos minutos antes del inicio. Omitir si no quiere aviso.",
+          },
+        },
+        required: ["title", "startTime"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "update_reservation",
+      description:
+        "Editar una reserva existente identificada por su título (y opcionalmente su fecha). Solo cambia los campos provistos.",
+      parameters: {
+        type: "object",
+        properties: {
+          title: { type: "string", description: "Título actual de la reserva" },
+          onDate: { type: "string", description: "Fecha actual YYYY-MM-DD (para desambiguar)" },
+          newTitle: { type: "string" },
+          date: { type: "string", description: "Nueva fecha YYYY-MM-DD" },
+          startTime: { type: "string" },
+          endTime: { type: "string" },
+          notes: { type: "string" },
+          notifyMinutes: { type: "integer" },
+        },
+        required: ["title"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "delete_reservation",
+      description: "Borrar una reserva por su título (y opcionalmente su fecha).",
+      parameters: {
+        type: "object",
+        properties: {
+          title: { type: "string" },
+          onDate: { type: "string", description: "Fecha YYYY-MM-DD (opcional)" },
+        },
+        required: ["title"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "add_flex_routine",
+      description:
+        "Crear una rutina flexible: un hábito sin hora ni día fijo que se marca cuando se hace (ej: deporte, meditar, leer). Distinto de una rutina con horario.",
+      parameters: {
+        type: "object",
+        properties: {
+          name: { type: "string", description: "Nombre del hábito" },
+        },
+        required: ["name"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "complete_flex_routine",
+      description:
+        "Marcar una rutina flexible como hecha hoy, por su nombre (ej: 'ya hice deporte').",
+      parameters: {
+        type: "object",
+        properties: {
+          name: { type: "string" },
+        },
+        required: ["name"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "set_daily_note",
       description: "Escribir o reemplazar la nota/reflexión del día.",
       parameters: {
@@ -327,6 +509,9 @@ export function buildActions(
 ): { actions: BeatAction[]; results: ToolResult[] } {
   const actions: BeatAction[] = [];
   const results: ToolResult[] = [];
+  // Proyectos visibles para resolver nombres → incluye los creados en esta
+  // misma tanda, para que "creá proyecto X y agregá tarea a X" funcione.
+  const dynamicProjects = ctx.projects.map((p) => ({ id: p.id, name: p.name }));
 
   for (const call of toolCalls) {
     if (call.type !== "function") continue;
@@ -363,7 +548,7 @@ export function buildActions(
 
       case "add_project_task": {
         const title = String(args.title ?? "").trim();
-        const proj = findByName(ctx.projects, String(args.project ?? ""));
+        const proj = findByName(dynamicProjects, String(args.project ?? ""));
         if (!title) {
           results.push({ tool_call_id: id, summary: "Falta el texto de la tarea." });
           break;
@@ -371,7 +556,7 @@ export function buildActions(
         if (!proj) {
           results.push({
             tool_call_id: id,
-            summary: `No existe un proyecto llamado "${args.project}". Proyectos: ${ctx.projects
+            summary: `No existe un proyecto llamado "${args.project}". Proyectos: ${dynamicProjects
               .map((p) => p.name)
               .join(", ") || "ninguno"}.`,
           });
@@ -438,15 +623,17 @@ export function buildActions(
           results.push({ tool_call_id: id, summary: "Falta el nombre del proyecto." });
           break;
         }
+        const newProjectId = uuid();
         actions.push({
           type: "ADD_PROJECT",
           project: {
-            id: uuid(),
+            id: newProjectId,
             name: pname,
             color: typeof args.color === "string" ? args.color : randomColor(),
             tasks: [],
           },
         });
+        dynamicProjects.push({ id: newProjectId, name: pname });
         results.push({ tool_call_id: id, summary: `Proyecto creado: ${pname}.` });
         break;
       }
@@ -533,6 +720,229 @@ export function buildActions(
         }
         actions.push({ type: "TOGGLE_ROUTINE", id: current.id });
         results.push({ tool_call_id: id, summary: `Rutina marcada: ${current.name}.` });
+        break;
+      }
+
+      case "add_event": {
+        const title = String(args.title ?? "").trim();
+        const date =
+          typeof args.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(args.date)
+            ? args.date
+            : ctx.today;
+        if (!title) {
+          results.push({ tool_call_id: id, summary: "Falta el título del evento." });
+          break;
+        }
+        const time =
+          typeof args.time === "string" && /^\d{1,2}:\d{2}$/.test(args.time)
+            ? args.time
+            : undefined;
+        const notifyMinutes =
+          typeof args.notifyMinutes === "number" && args.notifyMinutes > 0
+            ? args.notifyMinutes
+            : undefined;
+        actions.push({
+          type: "ADD_EVENT",
+          event: {
+            id: uuid(),
+            title,
+            date,
+            time,
+            notes: typeof args.notes === "string" ? args.notes : undefined,
+            notifyMinutes,
+            color: "#e5a01e",
+          },
+        });
+        results.push({
+          tool_call_id: id,
+          summary: `Evento agendado: "${title}" el ${date}${time ? ` a las ${time}` : ""}.`,
+        });
+        break;
+      }
+
+      case "update_event": {
+        const onDate =
+          typeof args.onDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(args.onDate)
+            ? args.onDate
+            : undefined;
+        const pool = onDate ? ctx.events.filter((e) => e.date === onDate) : ctx.events;
+        const found = findByName(pool, String(args.title ?? ""));
+        if (!found) {
+          results.push({ tool_call_id: id, summary: `No encontré el evento "${args.title}".` });
+          break;
+        }
+        const newDate =
+          typeof args.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(args.date)
+            ? args.date
+            : found.date;
+        const newTime =
+          typeof args.time === "string" && /^\d{1,2}:\d{2}$/.test(args.time)
+            ? args.time
+            : found.time;
+        actions.push({
+          type: "UPDATE_EVENT",
+          event: {
+            id: found.id,
+            title:
+              typeof args.newTitle === "string" && args.newTitle.trim()
+                ? args.newTitle.trim()
+                : found.title,
+            date: newDate,
+            time: newTime,
+            notes: typeof args.notes === "string" ? args.notes : found.notes,
+            notifyMinutes:
+              typeof args.notifyMinutes === "number"
+                ? args.notifyMinutes
+                : found.notifyMinutes,
+            color: "#e5a01e",
+          },
+        });
+        results.push({ tool_call_id: id, summary: `Evento "${found.title}" actualizado.` });
+        break;
+      }
+
+      case "delete_event": {
+        const onDate =
+          typeof args.onDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(args.onDate)
+            ? args.onDate
+            : undefined;
+        const pool = onDate ? ctx.events.filter((e) => e.date === onDate) : ctx.events;
+        const found = findByName(pool, String(args.title ?? ""));
+        if (!found) {
+          results.push({ tool_call_id: id, summary: `No encontré el evento "${args.title}".` });
+          break;
+        }
+        actions.push({ type: "DELETE_EVENT", id: found.id });
+        results.push({ tool_call_id: id, summary: `Evento borrado: "${found.title}".` });
+        break;
+      }
+
+      case "add_reservation": {
+        const title = String(args.title ?? "").trim();
+        const startTime =
+          typeof args.startTime === "string" && /^\d{1,2}:\d{2}$/.test(args.startTime)
+            ? args.startTime
+            : "";
+        if (!title || !startTime) {
+          results.push({ tool_call_id: id, summary: "Falta el título o la hora de inicio de la reserva." });
+          break;
+        }
+        const date =
+          typeof args.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(args.date)
+            ? args.date
+            : ctx.today;
+        const endTime =
+          typeof args.endTime === "string" && /^\d{1,2}:\d{2}$/.test(args.endTime)
+            ? args.endTime
+            : undefined;
+        const notifyMinutes =
+          typeof args.notifyMinutes === "number" && args.notifyMinutes > 0
+            ? args.notifyMinutes
+            : undefined;
+        actions.push({
+          type: "ADD_RESERVATION",
+          reservation: {
+            id: uuid(),
+            title,
+            date,
+            startTime,
+            endTime,
+            notes: typeof args.notes === "string" ? args.notes : undefined,
+            notifyMinutes,
+            color: "#a78bfa",
+          },
+        });
+        results.push({
+          tool_call_id: id,
+          summary: `Reserva creada: "${title}" el ${date} ${startTime}${endTime ? `–${endTime}` : ""}.`,
+        });
+        break;
+      }
+
+      case "update_reservation": {
+        const onDate =
+          typeof args.onDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(args.onDate)
+            ? args.onDate
+            : undefined;
+        const pool = onDate ? ctx.reservations.filter((r) => r.date === onDate) : ctx.reservations;
+        const found = findByName(pool, String(args.title ?? ""));
+        if (!found) {
+          results.push({ tool_call_id: id, summary: `No encontré la reserva "${args.title}".` });
+          break;
+        }
+        const newDate =
+          typeof args.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(args.date)
+            ? args.date
+            : found.date;
+        const newStart =
+          typeof args.startTime === "string" && /^\d{1,2}:\d{2}$/.test(args.startTime)
+            ? args.startTime
+            : found.startTime;
+        const newEnd =
+          typeof args.endTime === "string" && /^\d{1,2}:\d{2}$/.test(args.endTime)
+            ? args.endTime
+            : found.endTime;
+        actions.push({
+          type: "UPDATE_RESERVATION",
+          reservation: {
+            id: found.id,
+            title:
+              typeof args.newTitle === "string" && args.newTitle.trim()
+                ? args.newTitle.trim()
+                : found.title,
+            date: newDate,
+            startTime: newStart,
+            endTime: newEnd,
+            notifyMinutes:
+              typeof args.notifyMinutes === "number" ? args.notifyMinutes : found.notifyMinutes,
+            color: "#a78bfa",
+          },
+        });
+        results.push({ tool_call_id: id, summary: `Reserva "${found.title}" actualizada.` });
+        break;
+      }
+
+      case "delete_reservation": {
+        const onDate =
+          typeof args.onDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(args.onDate)
+            ? args.onDate
+            : undefined;
+        const pool = onDate ? ctx.reservations.filter((r) => r.date === onDate) : ctx.reservations;
+        const found = findByName(pool, String(args.title ?? ""));
+        if (!found) {
+          results.push({ tool_call_id: id, summary: `No encontré la reserva "${args.title}".` });
+          break;
+        }
+        actions.push({ type: "DELETE_RESERVATION", id: found.id });
+        results.push({ tool_call_id: id, summary: `Reserva borrada: "${found.title}".` });
+        break;
+      }
+
+      case "add_flex_routine": {
+        const fname = String(args.name ?? "").trim();
+        if (!fname) {
+          results.push({ tool_call_id: id, summary: "Falta el nombre de la rutina flexible." });
+          break;
+        }
+        actions.push({
+          type: "ADD_FLEX_ROUTINE",
+          flexRoutine: { id: uuid(), name: fname, color: randomColor(), completedDates: [] },
+        });
+        results.push({ tool_call_id: id, summary: `Rutina flexible creada: ${fname}.` });
+        break;
+      }
+
+      case "complete_flex_routine": {
+        const found = findByName(ctx.flexRoutines, String(args.name ?? ""));
+        if (!found) {
+          results.push({
+            tool_call_id: id,
+            summary: `No encontré una rutina flexible que diga "${args.name}".`,
+          });
+          break;
+        }
+        actions.push({ type: "TOGGLE_FLEX_ROUTINE", id: found.id, date: ctx.today });
+        results.push({ tool_call_id: id, summary: `Marqué "${found.name}" como hecha hoy.` });
         break;
       }
 
