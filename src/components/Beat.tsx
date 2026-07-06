@@ -110,7 +110,7 @@ export function Beat() {
         notifyMinutes: e.notifyMinutes,
       }));
     const upcomingReservations = s.reservations
-      .filter((r) => r.date >= today)
+      .filter((r) => r.repeat === "daily" || r.date >= today)
       .slice(0, 40)
       .map((r) => ({
         id: r.id,
@@ -119,6 +119,7 @@ export function Beat() {
         startTime: r.startTime,
         endTime: r.endTime,
         notifyMinutes: r.notifyMinutes,
+        repeat: r.repeat,
       }));
     return {
       today,

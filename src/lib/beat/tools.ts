@@ -30,6 +30,7 @@ export interface BeatContext {
     startTime: string;
     endTime?: string;
     notifyMinutes?: number;
+    repeat?: "daily";
   }[];
   flexRoutines: { id: string; name: string }[];
 }
@@ -386,6 +387,12 @@ export const BEAT_TOOLS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
           notifyMinutes: {
             type: "integer",
             description: "Avisar estos minutos antes del inicio. Omitir si no quiere aviso.",
+          },
+          repeat: {
+            type: "string",
+            enum: ["daily"],
+            description:
+              "Poné 'daily' si la reserva es para TODOS los días (recurrente, ej 'reservá todos los días de 9 a 10'). Omitir si es solo ese día.",
           },
         },
         required: ["title", "startTime"],
@@ -839,6 +846,7 @@ export function buildActions(
           typeof args.notifyMinutes === "number" && args.notifyMinutes > 0
             ? args.notifyMinutes
             : undefined;
+        const repeat = args.repeat === "daily" ? "daily" : undefined;
         actions.push({
           type: "ADD_RESERVATION",
           reservation: {
@@ -850,11 +858,12 @@ export function buildActions(
             notes: typeof args.notes === "string" ? args.notes : undefined,
             notifyMinutes,
             color: "#a78bfa",
+            repeat,
           },
         });
         results.push({
           tool_call_id: id,
-          summary: `Reserva creada: "${title}" el ${date} ${startTime}${endTime ? `–${endTime}` : ""}.`,
+          summary: `Reserva creada: "${title}"${repeat ? " (todos los días)" : ` el ${date}`} ${startTime}${endTime ? `–${endTime}` : ""}.`,
         });
         break;
       }
@@ -896,6 +905,7 @@ export function buildActions(
             notifyMinutes:
               typeof args.notifyMinutes === "number" ? args.notifyMinutes : found.notifyMinutes,
             color: "#a78bfa",
+            repeat: found.repeat,
           },
         });
         results.push({ tool_call_id: id, summary: `Reserva "${found.title}" actualizada.` });

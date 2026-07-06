@@ -57,6 +57,7 @@ export interface Reservation {
   notes?: string;
   color?: string;
   notifyMinutes?: number; // aviso X min antes de startTime (undefined = sin aviso)
+  repeat?: "daily"; // "daily" = se repite todos los días; undefined = solo ese día
 }
 
 export interface DayLog {

@@ -14,6 +14,7 @@ import {
   Calendar as CalendarIcon,
   Bookmark,
   Dumbbell,
+  Repeat,
 } from "lucide-react";
 
 function addDaysStr(dateStr: string, delta: number): string {
@@ -67,6 +68,7 @@ interface ResFormState {
   notes: string;
   notify: boolean;
   notifyMinutes: number;
+  repeat: boolean; // true = todos los días
 }
 
 const emptyRes: ResFormState = {
@@ -76,6 +78,7 @@ const emptyRes: ResFormState = {
   notes: "",
   notify: false,
   notifyMinutes: 15,
+  repeat: false,
 };
 
 const RESERVATION_COLOR = "#a78bfa"; // violeta: bloque tentativo/solapable
@@ -120,7 +123,7 @@ export function Agenda() {
     .sort((a, b) => a.startTime.localeCompare(b.startTime));
 
   const dayReservations = state.reservations
-    .filter((r) => r.date === selected)
+    .filter((r) => r.repeat === "daily" || r.date === selected)
     .sort((a, b) => a.startTime.localeCompare(b.startTime));
 
   const flexRoutines = state.flexRoutines;
@@ -179,6 +182,7 @@ export function Agenda() {
       notes: r.notes ?? "",
       notify: r.notifyMinutes !== undefined,
       notifyMinutes: r.notifyMinutes ?? 15,
+      repeat: r.repeat === "daily",
     });
     setEditingResId(r.id);
     setShowResForm(true);
@@ -197,6 +201,7 @@ export function Agenda() {
       notes: resForm.notes.trim() || undefined,
       notifyMinutes: resForm.notify ? resForm.notifyMinutes : undefined,
       color: RESERVATION_COLOR,
+      repeat: resForm.repeat ? "daily" : undefined,
     };
     dispatch({ type: editingResId ? "UPDATE_RESERVATION" : "ADD_RESERVATION", reservation: base });
     setShowResForm(false);
@@ -489,6 +494,30 @@ export function Agenda() {
               placeholder="Nota (opcional)"
               className="bg-[rgba(255,255,255,0.04)] border border-[var(--border)] rounded-lg px-3 py-2 text-[13px] text-[var(--text-primary)] placeholder:text-[var(--text-tertiary)] focus:outline-none focus:border-[var(--accent-muted)]"
             />
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={() => setResForm({ ...resForm, repeat: false })}
+                className={`flex-1 text-[12px] rounded-lg py-1.5 border transition-colors ${
+                  !resForm.repeat
+                    ? "border-[var(--accent-muted)] bg-[var(--accent-subtle)] text-[var(--text-primary)]"
+                    : "border-[var(--border)] text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+                }`}
+              >
+                Solo este día
+              </button>
+              <button
+                type="button"
+                onClick={() => setResForm({ ...resForm, repeat: true })}
+                className={`flex-1 flex items-center justify-center gap-1 text-[12px] rounded-lg py-1.5 border transition-colors ${
+                  resForm.repeat
+                    ? "border-[var(--accent-muted)] bg-[var(--accent-subtle)] text-[var(--text-primary)]"
+                    : "border-[var(--border)] text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+                }`}
+              >
+                <Repeat size={12} /> Todos los días
+              </button>
+            </div>
             <label className="flex items-center gap-2 text-[12px] text-[var(--text-secondary)]">
               <input
                 type="checkbox"
@@ -553,6 +582,9 @@ export function Agenda() {
                     <p className="text-[11px] text-[var(--text-tertiary)] truncate">{r.notes}</p>
                   )}
                 </button>
+                {r.repeat === "daily" && (
+                  <Repeat size={13} className="text-[var(--text-tertiary)] shrink-0" aria-label="Todos los días" />
+                )}
                 {r.notifyMinutes !== undefined && (
                   <Bell size={13} className="text-[var(--accent)] shrink-0" />
                 )}

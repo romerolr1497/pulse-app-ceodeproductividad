@@ -44,6 +44,7 @@ type Reserva = {
   startTime: string;
   endTime?: string;
   notifyMinutes?: number;
+  repeat?: "daily";
 };
 type SubRow = {
   id: string;
@@ -244,7 +245,7 @@ async function handle(req: NextRequest) {
     // 2b) Recordatorios de reservas (bloques de tiempo con aviso)
     const userReservations = reservationsByUser.get(row.user_id) ?? [];
     for (const rv of userReservations) {
-      if (rv.date !== todayStr) continue;
+      if (rv.repeat !== "daily" && rv.date !== todayStr) continue;
       if (!rv.startTime || rv.notifyMinutes === undefined || rv.notifyMinutes === null) continue;
       const rvMin = parseHHMM(rv.startTime);
       if (rvMin === null) continue;
@@ -258,7 +259,7 @@ async function handle(req: NextRequest) {
         title: "Pulse · Reserva",
         body: rvBody,
         url: "/agenda",
-        tag: `reservation-${rv.id}`,
+        tag: `reservation-${rv.id}-${todayStr}`,
       });
       try {
         await webpush.sendNotification(row.subscription, rvPayload);
