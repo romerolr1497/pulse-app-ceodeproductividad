@@ -79,7 +79,10 @@ export function RoutineManager() {
               <Pencil className="w-3.5 h-3.5" />
             </button>
             <button
-              onClick={() => dispatch({ type: "DELETE_ROUTINE", id: r.id })}
+              onClick={() => {
+                if (confirm(`¿Borrar la rutina “${r.name}”?`))
+                  dispatch({ type: "DELETE_ROUTINE", id: r.id });
+              }}
               className="transition p-1.5 rounded-lg hover:bg-[var(--danger)]/10 text-[var(--text-tertiary)] hover:text-[var(--danger)]"
               aria-label="Borrar"
             >

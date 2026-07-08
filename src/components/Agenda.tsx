@@ -401,9 +401,12 @@ export function Agenda() {
                   <Bell size={13} className="text-[var(--accent)] shrink-0" />
                 )}
                 <button
-                  onClick={() => dispatch({ type: "DELETE_EVENT", id: ev.id })}
+                  onClick={() => {
+                    if (confirm(`¿Borrar el evento “${ev.title}”?`))
+                      dispatch({ type: "DELETE_EVENT", id: ev.id });
+                  }}
                   aria-label="Borrar"
-                  className="w-8 h-8 flex items-center justify-center rounded-lg text-[var(--text-tertiary)] hover:text-[var(--danger)] opacity-0 group-hover:opacity-100 transition-all shrink-0"
+                  className="w-8 h-8 flex items-center justify-center rounded-lg text-[var(--text-tertiary)] hover:text-[var(--danger)] opacity-50 group-hover:opacity-100 transition-all shrink-0"
                 >
                   <Trash2 size={15} />
                 </button>
@@ -589,9 +592,12 @@ export function Agenda() {
                   <Bell size={13} className="text-[var(--accent)] shrink-0" />
                 )}
                 <button
-                  onClick={() => dispatch({ type: "DELETE_RESERVATION", id: r.id })}
+                  onClick={() => {
+                    if (confirm(`¿Borrar la reserva “${r.title}”?`))
+                      dispatch({ type: "DELETE_RESERVATION", id: r.id });
+                  }}
                   aria-label="Borrar"
-                  className="w-8 h-8 flex items-center justify-center rounded-lg text-[var(--text-tertiary)] hover:text-[var(--danger)] opacity-0 group-hover:opacity-100 transition-all shrink-0"
+                  className="w-8 h-8 flex items-center justify-center rounded-lg text-[var(--text-tertiary)] hover:text-[var(--danger)] opacity-50 group-hover:opacity-100 transition-all shrink-0"
                 >
                   <Trash2 size={15} />
                 </button>
@@ -671,9 +677,12 @@ export function Agenda() {
                     {f.completedDates.length}× total
                   </span>
                   <button
-                    onClick={() => dispatch({ type: "DELETE_FLEX_ROUTINE", id: f.id })}
+                    onClick={() => {
+                      if (confirm(`¿Borrar la rutina “${f.name}”?`))
+                        dispatch({ type: "DELETE_FLEX_ROUTINE", id: f.id });
+                    }}
                     aria-label="Borrar"
-                    className="w-8 h-8 flex items-center justify-center rounded-lg text-[var(--text-tertiary)] hover:text-[var(--danger)] opacity-0 group-hover:opacity-100 transition-all shrink-0"
+                    className="w-8 h-8 flex items-center justify-center rounded-lg text-[var(--text-tertiary)] hover:text-[var(--danger)] opacity-50 group-hover:opacity-100 transition-all shrink-0"
                   >
                     <Trash2 size={15} />
                   </button>

@@ -345,6 +345,20 @@ const USER_ACTION_TYPES = new Set<Action["type"]>([
   "SAVE_DAY_LOG", "UPDATE_SETTINGS", "SET_NOTE", "RESET_ALL",
 ]);
 
+// ¿Este estado contiene datos reales del usuario? (no es un estado vacío/default)
+// Se usa como red de seguridad para NUNCA pisar la nube con un estado vacío.
+function hasUserData(s: Partial<State> | null | undefined): boolean {
+  if (!s) return false;
+  if (s.tasks && s.tasks.length > 0) return true;
+  if (s.events && s.events.length > 0) return true;
+  if (s.reservations && s.reservations.length > 0) return true;
+  if (s.flexRoutines && s.flexRoutines.length > 0) return true;
+  if (s.logs && s.logs.length > 0) return true;
+  if (s.notes && Object.keys(s.notes).length > 0) return true;
+  if (s.projects && s.projects.some((p) => p.tasks && p.tasks.length > 0)) return true;
+  return false;
+}
+
 export function StoreProvider({ children }: { children: ReactNode }) {
   const [state, rawDispatch] = useReducer(reducer, initialState);
   const [session, setSession] = useState<Session | null>(null);
@@ -355,11 +369,16 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const hydrated = useRef(false);
   const skipPush = useRef(false);
   const pulledUserId = useRef<string | null>(null);
+  // Marca si el usuario hizo alguna edición en esta sesión. Si NO editó y el
+  // estado quedó vacío (ej: se perdió el cache tras un deploy), jamás pisamos
+  // la nube: en su lugar recuperamos lo que haya guardado.
+  const userEdited = useRef(false);
 
   // Envolvemos dispatch para marcar la hora de la última edición del usuario.
   // Sirve para resolver conflictos de sync (last-write-wins) sin perder tareas.
   const dispatch = useCallback((action: Action) => {
     if (hydrated.current && USER_ACTION_TYPES.has(action.type)) {
+      userEdited.current = true;
       try {
         localStorage.setItem("organizer-updated-at", new Date().toISOString());
       } catch {}
@@ -400,6 +419,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   // Guarda en localStorage ante cualquier cambio (cache offline)
   useEffect(() => {
+    // Si todavía es el estado inicial (aún no cargó el cache), no escribimos:
+    // así evitamos pisar los datos guardados con el estado vacío por defecto.
+    if (state === initialState) return;
     localStorage.setItem("organizer-data", JSON.stringify(state));
   }, [state]);
 
@@ -446,7 +468,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         const remoteAt = new Date((data.updated_at as string) ?? 0).getTime();
         const localRaw = localStorage.getItem("organizer-updated-at");
         const localAt = localRaw ? new Date(localRaw).getTime() : 0;
-        if (localAt > remoteAt) {
+        const remoteHasData = hasUserData(data.data as State);
+        const localHasData = hasUserData(stateRef.current);
+        if (localHasData && !remoteHasData) {
+          // La nube está vacía pero acá hay datos reales: recuperamos la nube.
+          await pushNow(session, stateRef.current);
+        } else if (localAt > remoteAt) {
           await pushNow(session, stateRef.current);
         } else {
           skipPush.current = true;
@@ -487,6 +514,30 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   async function pushNow(s: Session, data: State) {
     if (!supabase) return;
+    // 🛡️ Red de seguridad anti-borrado: si el estado local está vacío y el
+    // usuario NO editó nada en esta sesión (ej: se perdió el cache tras un
+    // deploy o iOS lo vació), NO pisamos la nube. Si la nube tiene datos, los
+    // recuperamos en vez de destruirlos.
+    if (!hasUserData(data) && !userEdited.current) {
+      const { data: remote } = await supabase
+        .from("app_state")
+        .select("data, updated_at")
+        .eq("user_id", s.user.id)
+        .maybeSingle();
+      if (remote?.data && hasUserData(remote.data as State)) {
+        skipPush.current = true;
+        dispatch({ type: "IMPORT_DATA", payload: remote.data as Partial<State> });
+        dispatch({ type: "ROLLOVER_DAY", today: localDateStr() });
+        try {
+          localStorage.setItem(
+            "organizer-updated-at",
+            (remote.updated_at as string) ?? new Date().toISOString()
+          );
+        } catch {}
+        setStatus("synced");
+        return;
+      }
+    }
     setStatus("syncing");
     const ts = new Date().toISOString();
     const { error } = await supabase.from("app_state").upsert({

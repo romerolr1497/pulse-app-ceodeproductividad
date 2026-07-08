@@ -91,7 +91,10 @@ export function Projects() {
                       />
                       <span className="text-sm text-zinc-300 flex-1">{task.title}</span>
                       <button
-                        onClick={() => dispatch({ type: "DELETE_PROJECT_TASK", projectId: project.id, taskId: task.id })}
+                        onClick={() => {
+                          if (confirm(`¿Borrar la tarea “${task.title}”?`))
+                            dispatch({ type: "DELETE_PROJECT_TASK", projectId: project.id, taskId: task.id });
+                        }}
                         className="opacity-60 hover:opacity-100 text-zinc-600 hover:text-red-400 transition"
                       >
                         <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>

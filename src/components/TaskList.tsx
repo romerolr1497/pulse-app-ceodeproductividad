@@ -74,7 +74,10 @@ export function TaskList() {
               />
               <span className="flex-1 text-[13px] text-[var(--text-secondary)] min-w-0 truncate">{task.title}</span>
               <button
-                onClick={() => dispatch({ type: "DELETE_TASK", id: task.id })}
+                onClick={() => {
+                  if (confirm(`¿Borrar la tarea “${task.title}”?`))
+                    dispatch({ type: "DELETE_TASK", id: task.id });
+                }}
                 className="opacity-60 hover:opacity-100 p-1 hover:bg-[var(--danger)]/10 rounded transition"
               >
                 <Trash2 className="w-3 h-3 text-[var(--text-tertiary)] hover:text-[var(--danger)]" />
